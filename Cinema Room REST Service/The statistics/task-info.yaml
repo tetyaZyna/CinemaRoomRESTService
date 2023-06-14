@@ -1,0 +1,822 @@
+type: edu
+files:
+- name: src/cinema/Main.java
+  visible: true
+  text: |
+    package cinema;
+
+    import org.springframework.boot.SpringApplication;
+    import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+    @SpringBootApplication
+    public class Main {
+        public static void main(String[] args) {
+            SpringApplication.run(Main.class, args);
+        }
+    }
+  learner_created: false
+- name: build.gradle
+  visible: true
+  text: |-
+    buildscript {
+        repositories {
+            mavenCentral()
+        }
+        dependencies {
+            classpath "org.springframework.boot:spring-boot-gradle-plugin:$hs.spring.bootVersion"
+            classpath "io.spring.gradle:dependency-management-plugin:$hs.spring.dependencyManagementVersion"
+        }
+    }
+
+    apply plugin: 'java'
+    apply plugin: 'org.springframework.boot'
+    apply plugin: 'io.spring.dependency-management'
+
+    repositories {
+        mavenCentral()
+    }
+
+    sourceSets.main.resources.srcDirs = ["src/resources"]
+
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter'
+        implementation 'org.springframework.boot:spring-boot-starter-actuator'
+        implementation 'org.springframework.boot:spring-boot-starter-web'
+    }
+  learner_created: false
+- name: test/CinemaTests.java
+  visible: false
+  text: |-
+    import cinema.Main;
+    import com.google.gson.Gson;
+    import com.google.gson.JsonObject;
+    import org.hyperskill.hstest.dynamic.DynamicTest;
+    import org.hyperskill.hstest.dynamic.input.DynamicTesting;
+    import org.hyperskill.hstest.exception.outcomes.WrongAnswer;
+    import org.hyperskill.hstest.mocks.web.response.HttpResponse;
+    import org.hyperskill.hstest.stage.SpringTest;
+    import org.hyperskill.hstest.testcase.CheckResult;
+
+    import java.util.Map;
+    import java.util.UUID;
+
+    import static org.hyperskill.hstest.testing.expect.Expectation.expect;
+    import static org.hyperskill.hstest.testing.expect.json.JsonChecker.*;
+
+    public class CinemaTests extends SpringTest {
+
+        private static final String ALREADY_PURCHASED_ERROR_MESSAGE = "The ticket has been already purchased!";
+        private static final String OUT_OF_BOUNDS_ERROR_MESSAGE = "The number of a row or a column is out of bounds!";
+        private static final String WRONG_TOKEN_ERROR_MESSAGE = "Wrong token!";
+        private static final String WRONG_PASSWORD_MESSAGE = "The password is wrong!";
+
+        private static final Gson gson = new Gson();
+
+        private static String token = "";
+
+        public CinemaTests() {
+            super(Main.class);
+        }
+
+        private static void checkStatusCode(HttpResponse resp, int status) {
+            if (resp.getStatusCode() != status) {
+                throw new WrongAnswer(
+                    resp.getRequest().getMethod() + " " +
+                        resp.getRequest().getLocalUri() +
+                        " should respond with status code " + status + ", " +
+                        "responded: " + resp.getStatusCode() + "\n\n" +
+                        "Response body:\n\n" + resp.getContent()
+                );
+            }
+        }
+
+        CheckResult testEndpoint() {
+            HttpResponse response = get("/seats").send();
+            checkStatusCode(response, 200);
+            return CheckResult.correct();
+        }
+
+        CheckResult testEndpointAvailableSeats() {
+            HttpResponse response = get("/seats").send();
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("available_seats",
+                        isArray(
+                            81,
+                            isObject()
+                                .value("row", isInteger(i -> i >= 1 && i <= 9))
+                                .value("column", isInteger(i -> i >= 1 && i <= 9))
+                                .value("price", isInteger(price -> price == 10 || price == 8))
+                        )
+                    )
+                    .value("total_columns", 9)
+                    .value("total_rows", 9)
+            );
+            return CheckResult.correct();
+        }
+
+        CheckResult testPurchaseTicket() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "1",
+                    "column", "1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 200);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("token", isString())
+                        .value("ticket",
+                            isObject()
+                                .value("row", 1)
+                                .value("column", 1)
+                                .value("price", 10)
+                        )
+                );
+
+            JsonObject object = gson.fromJson(response.getContent(), JsonObject.class);
+            token = object.get("token").getAsString();
+
+            return CheckResult.correct();
+        }
+
+        CheckResult testErrorMessageThatTicketHasBeenPurchased() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "1",
+                    "column", "1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", ALREADY_PURCHASED_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+            return CheckResult.correct();
+        }
+
+        CheckResult testErrorMessageThatNumbersOutOfBounds() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "10",
+                    "column", "1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", OUT_OF_BOUNDS_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+
+            response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "1",
+                    "column", "10"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", OUT_OF_BOUNDS_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+
+            response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "-1",
+                    "column", "-1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", OUT_OF_BOUNDS_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+
+
+            return CheckResult.correct();
+        }
+
+        CheckResult testReturnTicket() {
+
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", 2,
+                    "column", 5
+                ))
+            ).send();
+
+            checkStatusCode(response, 200);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("token", isString())
+                        .value("ticket",
+                            isObject()
+                                .value("row", 2)
+                                .value("column", 5)
+                                .value("price", 10)
+                        )
+                );
+
+            JsonObject jsonResponse = gson.fromJson(response.getContent(), JsonObject.class);
+
+            String tokenFromResponse = jsonResponse.get("token").getAsString();
+            String wrongToken = UUID.randomUUID().toString();
+
+            response = post(
+                "/return",
+                gson.toJson(Map.of(
+                    "token", wrongToken
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("error", WRONG_TOKEN_ERROR_MESSAGE)
+                    .anyOtherValues()
+            );
+
+            response = post(
+                "/return",
+                gson.toJson(Map.of(
+                    "token", tokenFromResponse
+                ))
+            ).send();
+
+            checkStatusCode(response, 200);
+
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("returned_ticket",
+                        isObject()
+                            .value("row", 2)
+                            .value("column", 5)
+                            .value("price", 10)
+                    )
+            );
+
+            return CheckResult.correct();
+        }
+
+        CheckResult testStatsEndpoint() {
+
+            HttpResponse response = post("/stats", "").send();
+            checkStatusCode(response, 401);
+
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("error", WRONG_PASSWORD_MESSAGE)
+                    .anyOtherValues()
+            );
+
+
+            return CheckResult.correct();
+        }
+
+        CheckResult testStats(int numberOfPurchasedTickets, int currentIncome, int availableSeats) {
+            Map<String, String> requestParams = Map.of("password", "super_secret");
+            HttpResponse response = post("/stats", requestParams).send();
+            checkStatusCode(response, 200);
+
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("number_of_purchased_tickets", numberOfPurchasedTickets)
+                    .value("current_income", currentIncome)
+                    .value("number_of_available_seats", availableSeats)
+            );
+
+            return CheckResult.correct();
+        }
+
+        CheckResult returnTicket() {
+            HttpResponse response = post(
+                "/return",
+                gson.toJson(Map.of(
+                    "token", token
+                ))
+            ).send();
+
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("returned_ticket",
+                        isObject()
+                            .value("row", 7)
+                            .value("column", 4)
+                            .value("price", 8)
+                    )
+            );
+
+            return CheckResult.correct();
+        }
+
+        CheckResult testPurchaseAnotherTicket() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "7",
+                    "column", "4"
+                ))
+            ).send();
+
+            checkStatusCode(response, 200);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("token", isString())
+                        .value("ticket",
+                            isObject()
+                                .value("row", 7)
+                                .value("column", 4)
+                                .value("price", 8)
+                        )
+                );
+
+            JsonObject object = gson.fromJson(response.getContent(), JsonObject.class);
+            token = object.get("token").getAsString();
+
+            return CheckResult.correct();
+        }
+
+        @DynamicTest
+        DynamicTesting[] dynamicTests = new DynamicTesting[]{
+            this::testEndpoint,
+            this::testEndpointAvailableSeats,
+            this::testPurchaseTicket,
+            this::testErrorMessageThatTicketHasBeenPurchased,
+            this::testErrorMessageThatNumbersOutOfBounds,
+            this::testReturnTicket,
+            this::testStatsEndpoint,
+            () -> testStats(1, 10, 80),
+            this::testPurchaseAnotherTicket,
+            () -> testStats(2, 18, 79),
+            this::returnTicket,
+            () -> testStats(1, 10, 80),
+        };
+    }
+  learner_created: false
+- name: src/cinema/config/CinemaProps.java
+  visible: true
+  text: |
+    package cinema.config;
+
+    import jakarta.annotation.PostConstruct;
+    import lombok.extern.slf4j.Slf4j;
+    import org.springframework.boot.context.properties.ConfigurationProperties;
+
+    @Slf4j
+    @ConfigurationProperties(prefix = "cinema")
+    public record CinemaProps (
+        int totalRows,
+        int totalColumns,
+        int firstRows,
+        Price price
+    ){
+        public record Price(int low, int high) {}
+        @PostConstruct
+        void logLoaded() {
+            log.info("props = {}", this);
+        }
+    }
+  learner_created: true
+- name: src/cinema/model/response/Ticket.java
+  visible: true
+  text: |
+    package cinema.model.response;
+
+    public record Ticket (
+            int row,
+            int column,
+            int price
+    ){}
+  learner_created: true
+- name: src/cinema/model/response/CinemaRoomInfo.java
+  visible: true
+  text: |-
+    package cinema.model.response;
+
+    import java.util.List;
+
+    public record CinemaRoomInfo (
+            int totalRows,
+            int totalColumns,
+            List<Ticket> availableSeats
+    ) {}
+  learner_created: true
+- name: src/cinema/repository/SeatRepository.java
+  visible: true
+  text: |
+    package cinema.repository;
+
+    import cinema.model.response.Seat;
+    import org.springframework.stereotype.Repository;
+
+    import java.util.*;
+
+    @Repository
+    public class SeatRepository {
+        private Set<Seat> availableSeats = new LinkedHashSet<>();
+
+        public List<Seat> getAllAvailable() {
+            return availableSeats.stream().toList();
+        }
+
+        public void addSeat(Seat seat) {
+            availableSeats.add(seat);
+        }
+
+        public boolean exists(Seat seat) {
+            return availableSeats.contains(seat);
+        }
+
+        public boolean delete(Seat seat) {
+            return availableSeats.remove(seat);
+        }
+
+    }
+  learner_created: true
+- name: src/cinema/exception/AlreadyPurchasedException.java
+  visible: true
+  text: |
+    package cinema.exception;
+
+    public class AlreadyPurchasedException extends RuntimeException{
+        private static final String MESSAGE = "The ticket has been already purchased!";
+
+        public AlreadyPurchasedException() {
+            super(MESSAGE);
+        }
+    }
+  learner_created: true
+- name: src/cinema/exception/WrongTokenException.java
+  visible: true
+  text: |
+    package cinema.exception;
+
+    public class WrongTokenException extends RuntimeException{
+        private static final String MESSAGE = "Wrong token!";
+
+        public WrongTokenException() {
+            super(MESSAGE);
+        }
+    }
+  learner_created: true
+- name: src/cinema/config/Initializer.java
+  visible: true
+  text: |
+    package cinema.config;
+
+    import cinema.model.response.Seat;
+    import cinema.repository.SeatRepository;
+    import lombok.AllArgsConstructor;
+    import org.springframework.boot.CommandLineRunner;
+    import org.springframework.stereotype.Component;
+
+    import java.util.ArrayList;
+
+    @AllArgsConstructor
+    @Component
+    public class Initializer implements CommandLineRunner {
+        SeatRepository seatRepository;
+        CinemaProps props;
+
+        @Override
+        public void run(String... args) throws Exception {
+            for (int iRow = 1; iRow <= props.totalRows(); iRow++) {
+                for (int iCol = 1; iCol <= props.totalColumns(); iCol++) {
+                        seatRepository.addSeat(new Seat(iRow, iCol));
+                }
+            }
+        }
+
+    }
+  learner_created: true
+- name: src/cinema/model/request/ReturnTicketRequest.java
+  visible: true
+  text: |
+    package cinema.model.request;
+
+    public record ReturnTicketRequest(
+            String token
+    ) {}
+  learner_created: true
+- name: src/cinema/model/response/Seat.java
+  visible: true
+  text: |
+    package cinema.model.response;
+
+    public record Seat (
+            int row,
+            int column
+    ){}
+  learner_created: true
+- name: src/cinema/model/SoldTicket.java
+  visible: true
+  text: |
+    package cinema.model;
+
+    import cinema.model.response.Ticket;
+
+    public record SoldTicket(
+            String token,
+            Ticket ticket
+    ) {
+    }
+  learner_created: true
+- name: src/cinema/repository/SoldTicketRepository.java
+  visible: true
+  text: |
+    package cinema.repository;
+
+    import cinema.model.SoldTicket;
+    import cinema.model.response.Ticket;
+    import org.springframework.stereotype.Repository;
+
+    import java.util.*;
+
+    @Repository
+    public class SoldTicketRepository {
+        Map<String, Ticket> soldTickets = new HashMap<>();
+
+        public boolean exists(String token) {
+            return soldTickets.containsKey(token);
+        }
+
+        public Ticket getAvailable(String token) {
+            return soldTickets.get(token);
+        }
+
+        public void add(SoldTicket soldTicket) {
+            soldTickets.put(
+                    soldTicket.token(),
+                    soldTicket.ticket());
+        }
+
+        public Optional<Ticket> delete(String token) {
+            return Optional.ofNullable(soldTickets.remove(token));
+        }
+    }
+  learner_created: true
+- name: src/cinema/mapper/Mapper.java
+  visible: true
+  text: |
+    package cinema.mapper;
+
+    import cinema.model.response.Seat;
+    import cinema.model.response.Ticket;
+    import org.springframework.stereotype.Component;
+
+    @Component
+    public class Mapper {
+        public Seat toSeat(Ticket ticket) {
+            return new Seat(ticket.row(), ticket.column());
+        }
+    }
+  learner_created: true
+- name: src/cinema/controller/CinemaController.java
+  visible: true
+  text: |
+    package cinema.controller;
+
+    import cinema.exception.AlreadyPurchasedException;
+    import cinema.exception.SeatOutOfBoundsException;
+    import cinema.exception.WrongTokenException;
+    import cinema.model.request.ReturnTicketRequest;
+    import cinema.model.response.ReturnedTicketResponse;
+    import cinema.model.SoldTicket;
+    import cinema.model.response.CinemaRoomInfo;
+    import cinema.model.response.Seat;
+    import cinema.service.CinemaService;
+    import lombok.AllArgsConstructor;
+    import lombok.extern.slf4j.Slf4j;
+    import org.springframework.http.HttpStatus;
+    import org.springframework.web.bind.annotation.*;
+
+    @Slf4j
+    @AllArgsConstructor
+    @RestController
+    public class CinemaController {
+        CinemaService cinemaService;
+
+        @GetMapping("/seats")
+        CinemaRoomInfo availableSeats() {
+            return cinemaService.getCinemaRoomInfo();
+        }
+
+        @PostMapping("/purchase")
+        SoldTicket purchase(@RequestBody Seat seat) {
+            log.info("seat = {}", seat);
+            return cinemaService.purchase(seat);
+        }
+
+        @PostMapping("/return")
+        ReturnedTicketResponse returnTicket(@RequestBody ReturnTicketRequest req) {
+            log.info("token = {}", req.token());
+            return cinemaService.returnTicket(req.token());
+        }
+
+
+    }
+  learner_created: true
+- name: src/cinema/service/CinemaService.java
+  visible: true
+  text: |
+    package cinema.service;
+
+
+    import cinema.config.CinemaProps;
+    import cinema.exception.AlreadyPurchasedException;
+    import cinema.exception.SeatOutOfBoundsException;
+    import cinema.exception.WrongTokenException;
+    import cinema.mapper.Mapper;
+    import cinema.model.response.ReturnedTicketResponse;
+    import cinema.model.SoldTicket;
+    import cinema.model.response.CinemaRoomInfo;
+    import cinema.model.response.Seat;
+    import cinema.model.response.Ticket;
+    import cinema.repository.SeatRepository;
+    import cinema.repository.SoldTicketRepository;
+    import lombok.AllArgsConstructor;
+    import lombok.extern.slf4j.Slf4j;
+    import org.springframework.stereotype.Service;
+
+    import java.util.UUID;
+
+    @Slf4j
+    @AllArgsConstructor
+    @Service
+    public class CinemaService {
+        CinemaProps cinemaProps;
+        SeatRepository seatRepository;
+        SoldTicketRepository soldTicketRepository;
+        Mapper mapper;
+
+        public CinemaRoomInfo getCinemaRoomInfo() {
+            return new CinemaRoomInfo (
+                    cinemaProps.totalRows(),
+                    cinemaProps.totalColumns(),
+                    seatRepository.getAllAvailable().stream()
+                            .map(this::addPrice)
+                            .toList()
+            );
+        }
+
+        public SoldTicket purchase(Seat seat) {
+            if (!validate(seat)) {
+                throw new SeatOutOfBoundsException();
+            }
+            if (!seatRepository.exists(seat)) {
+                throw new AlreadyPurchasedException();
+            }
+            seatRepository.delete(seat);
+            String token = UUID.randomUUID().toString();
+            var ticket = addPrice(seat);
+            SoldTicket soldTicket = new SoldTicket(
+                    token, ticket);
+            soldTicketRepository.add(soldTicket);
+            return soldTicket;
+        }
+
+        private boolean validate(Seat seat) {
+            return !(seat.row() <= 0 || seat.column() <= 0
+                    || seat.row() > cinemaProps.totalRows()
+                    || seat.column() > cinemaProps.totalColumns());
+        }
+
+        private Ticket addPrice(Seat seat) {
+            return new Ticket(seat.row(), seat.column(), calcPrice(seat));
+        }
+
+        private int calcPrice(Seat seat) {
+            return seat.row() <= cinemaProps.firstRows()
+                    ? cinemaProps.price().high()
+                    : cinemaProps.price().low();
+        }
+
+        public ReturnedTicketResponse returnTicket(String token) {
+            var ticked = soldTicketRepository.delete(token)
+                    .orElseThrow(WrongTokenException::new);
+            seatRepository.addSeat(mapper.toSeat(ticked));
+            return new ReturnedTicketResponse(ticked);
+
+
+        }
+    }
+  learner_created: true
+- name: src/cinema/exception/SeatOutOfBoundsException.java
+  visible: true
+  text: |
+    package cinema.exception;
+
+    public class SeatOutOfBoundsException extends RuntimeException{
+        private static final String MESSAGE = "The number of a row or a column is out of bounds!";
+
+        public SeatOutOfBoundsException() {
+            super(MESSAGE);
+        }
+    }
+  learner_created: true
+- name: src/cinema/model/response/ReturnedTicketResponse.java
+  visible: true
+  text: |
+    package cinema.model.response;
+
+    public record ReturnedTicketResponse(
+            Ticket returnedTicket
+    ) {}
+  learner_created: true
+- name: src/cinema/controller/advice/ErrorControllerAdvice.java
+  visible: true
+  text: |
+    package cinema.controller.advice;
+
+    import cinema.exception.AlreadyPurchasedException;
+    import cinema.exception.SeatOutOfBoundsException;
+    import cinema.exception.WrongTokenException;
+    import org.springframework.http.HttpStatus;
+    import org.springframework.web.bind.annotation.ExceptionHandler;
+    import org.springframework.web.bind.annotation.ResponseStatus;
+    import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+    @RestControllerAdvice
+    public class ErrorControllerAdvice {
+        @ExceptionHandler({
+                AlreadyPurchasedException.class,
+                SeatOutOfBoundsException.class,
+                WrongTokenException.class
+        })
+        @ResponseStatus(HttpStatus.BAD_REQUEST)
+        ErrorDTO foo(Exception ex) {
+            return new ErrorDTO(ex.getMessage());
+        }
+
+        public record ErrorDTO(String error) {
+        }
+    }
+  learner_created: true
+- name: src/cinema/exception/WrongPasswordException.java
+  visible: true
+  learner_created: true
+- name: src/cinema/model/response/StatsResponse.java
+  visible: true
+  learner_created: true
+- name: src/cinema/service/impl/CinemaServiceImpl.java
+  visible: true
+  learner_created: true
+- name: src/cinema/service/mocks/CinemaServiceMock.java
+  visible: true
+  learner_created: true
+- name: src/cinema/repository/inmemory/SeatRepository.java
+  visible: true
+  learner_created: true
+- name: src/cinema/repository/inmemory/SoldTicketRepository.java
+  visible: true
+  learner_created: true
+- name: src/resources/application.properties
+  visible: true
+  text: |-
+    server.port=28852
+    management.endpoints.web.exposure.include=*
+    management.endpoint.shutdown.enabled=true
+  learner_created: false
+- name: src/cinema/model/entity/SoldTicketEntity.java
+  visible: true
+  learner_created: true
+- name: src/cinema/repository/dbrepo/SoldTicketEntityRepository.java
+  visible: true
+  learner_created: true
+feedback_link: https://hyperskill.org/learn/step/13378#comment
+status: Solved
+feedback:
+  message: Well done! You've finished the project. Select a new project on <a href="https://hyperskill.org/projects">Hyperskill</a>
+    to continue learning.
+  time: "Wed, 14 Jun 2023 13:14:55 UTC"
+record: -1
